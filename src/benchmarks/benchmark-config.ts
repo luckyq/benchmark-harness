@@ -219,6 +219,7 @@ export const ToolCallSchemaFuzzOptionsSchema = z.object({
   generator: z
     .enum(ToolCallSchemaFuzzGenerator)
     .default(ToolCallSchemaFuzzGenerator.Realistic),
+  scoreUnattributedRejections: z.boolean().default(false),
 });
 
 export const ToolCallSchemaFuzzBenchmarkConfigSchema = z.object({

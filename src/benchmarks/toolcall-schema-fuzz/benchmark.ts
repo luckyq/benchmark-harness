@@ -88,6 +88,7 @@ function makeLayer(
               allowFallbacks: config.allowFallbacks,
               switchyardAlgorithm: config.switchyardAlgorithm,
               models: config.models,
+              scoreUnattributedRejections: config.scoreUnattributedRejections,
             }),
           },
         })

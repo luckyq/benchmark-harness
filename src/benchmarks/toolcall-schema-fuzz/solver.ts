@@ -79,6 +79,7 @@ export interface ToolCallSchemaFuzzSolverOptions {
   readonly models?: readonly string[];
   readonly traceHeaders?: Readonly<Record<string, string>>;
   readonly retry?: RetryConfig;
+  readonly scoreUnattributedRejections?: boolean;
 }
 
 const CompletionResponseSchema = z.object({
@@ -214,7 +215,8 @@ function requestCompletion(
         }
         if (
           REJECTED_STATUSES.has(response.status) &&
-          isUpstreamRejection(text)
+          (options.scoreUnattributedRejections === true ||
+            isUpstreamRejection(text))
         ) {
           return {
             kind: "rejected",

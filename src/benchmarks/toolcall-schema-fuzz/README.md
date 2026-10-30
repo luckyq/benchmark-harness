@@ -15,7 +15,7 @@ The dataset (`realistic/wordings.json`, `regressions.json` and the cases built f
 ## Evaluation method
 
 - Temperature is fixed at 0. Requests go to `/chat/completions` with the case's system message, replayed history and tools; `parallel_tool_calls` is set for the parallel scenario.
-- `scorer.ts` validates each returned call against the exact schema sent (`json-schema.ts`), then compares it with the expected call. Failures are `no_tool_call`, `call_count`, `unknown_tool`, `wrong_tool`, `invalid_json`, `schema_violation` (wrong type or shape), `value_mismatch` (schema-valid but altered), `request_rejected` (a provider in the serving stack returned HTTP 400 or 422 for the request, e.g. an unsupported schema keyword) and `truncated` (skipped, not failed). A 400 or 422 that names no provider (OpenRouter rejected a run-level setting such as `max_tokens` or the routing preferences) and other 4xx responses (auth, unknown model) abort the run.
+- `scorer.ts` validates each returned call against the exact schema sent (`json-schema.ts`), then compares it with the expected call. Failures are `no_tool_call`, `call_count`, `unknown_tool`, `wrong_tool`, `invalid_json`, `schema_violation` (wrong type or shape), `value_mismatch` (schema-valid but altered), `request_rejected` (a provider in the serving stack returned HTTP 400 or 422 for the request, e.g. an unsupported schema keyword) and `truncated` (skipped, not failed). A 400 or 422 that names no provider (OpenRouter rejected a run-level setting such as `max_tokens` or the routing preferences) and other 4xx responses (auth, unknown model) abort the run; set `scoreUnattributedRejections` to score the former per sample instead.
 - `cli/report.ts` prints per-case stability and per-construct and per-scenario totals from result parquet files.
 
 ## Running
@@ -27,8 +27,16 @@ OPENROUTER_API_KEY=... bun run bench --benchmark toolcall_schema_fuzz \
 bun src/benchmarks/toolcall-schema-fuzz/cli/report.ts bench-results/<run>.parquet
 ```
 
+Against a serving stack directly (any `OPENROUTER_API_KEY` value is accepted; the stack returns bare 400s for unsupported schemas, so score them instead of aborting):
+
+```sh
+OPENROUTER_BASE_URL=http://localhost:8000/v1 OPENROUTER_API_KEY=unused bun run bench --benchmark toolcall_schema_fuzz \
+  --model Qwen/Qwen3.6-35B-A3B --solver-config '{"generator":"sentinel","scoreUnattributedRejections":true}' --reasoning-effort low
+```
+
 Results go to `bench-results/`. Pass `generator` in `--solver-config` to pick a case set.
 
 ## Config options
 
 - `generator`: `realistic` (default, 2668 samples, comparable across runs), `sentinel` (coverage-preserving subset of `realistic` plus any regressions, meant for many epochs) or `regressions` (confirmed shrunk failures; errors while `regressions.json` is empty).
+- `scoreUnattributedRejections`: `false` by default. When `true`, every HTTP 400 or 422 is scored `request_rejected` even if the body carries no OpenRouter error envelope (`error.metadata.provider_name`). Use it when `OPENROUTER_BASE_URL` points at a serving stack directly (vLLM, SGLang, Dynamo, …): those stacks return a bare 400 for an unsupported schema keyword, which otherwise aborts the run at the first such case. Run-level mistakes (a bad `max_tokens`, an unknown model) are then also scored as rejections, so check the report's `request_rejected` count against the case list.

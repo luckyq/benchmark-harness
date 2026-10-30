@@ -17,6 +17,7 @@ import {
 import { ProviderSort } from "../../internal/enums";
 import { caseLookup } from "./cases";
 import { TOOLCALL_SCHEMA_FUZZ_REALISTIC_CASES } from "./realistic/wordings";
+import type { ToolCallSchemaFuzzSolverOptions } from "./solver";
 import { buildRequestBody, toolCallSchemaFuzzSolver } from "./solver";
 
 const [ENTRY] = TOOLCALL_SCHEMA_FUZZ_REALISTIC_CASES;
@@ -42,7 +43,10 @@ function completion(finishReason: "stop" | "length"): Response {
   });
 }
 
-function solve(httpResponse: Response) {
+function solve(
+  httpResponse: Response,
+  options: Partial<ToolCallSchemaFuzzSolverOptions> = {}
+) {
   const entry = ENTRY;
   assert(entry !== undefined);
   const client = HttpClient.make((request) =>
@@ -55,6 +59,7 @@ function solve(httpResponse: Response) {
       reasoningEffort: "none",
       sessionId: "session-1",
       retry: { maxRetries: 0 },
+      ...options,
     },
     cases: caseLookup([entry]),
   });
@@ -113,7 +118,7 @@ describe("toolCallSchemaFuzzSolver", () => {
     }
   );
 
-  it.each([
+  const UNATTRIBUTED_REJECTIONS: readonly (readonly [string, string])[] = [
     [
       "no provider in the error",
       JSON.stringify({ error: { message: "bad max_tokens", code: 400 } }),
@@ -129,9 +134,65 @@ describe("toolCallSchemaFuzzSolver", () => {
       }),
     ],
     ["a non-JSON body", "bad request"],
-  ])("fails the run on a 400 with %s", async (_label, body) => {
-    const exit = await solve(new Response(body, { status: 400 }));
-    expect(isFailure(exit)).toBe(true);
+    [
+      "a direct serving stack's envelope",
+      JSON.stringify({
+        message: "Bad Request",
+        type: "Bad Request",
+        code: 400,
+      }),
+    ],
+  ];
+
+  it.each(UNATTRIBUTED_REJECTIONS)(
+    "fails the run on a 400 with %s",
+    async (_label, body) => {
+      const exit = await solve(new Response(body, { status: 400 }));
+      expect(isFailure(exit)).toBe(true);
+    }
+  );
+
+  describe("with scoreUnattributedRejections", () => {
+    it.each(UNATTRIBUTED_REJECTIONS)(
+      "records a 400 with %s for the scorer instead of failing the run",
+      async (_label, body) => {
+        const exit = await solve(new Response(body, { status: 400 }), {
+          scoreUnattributedRejections: true,
+        });
+        assert(isSuccess(exit));
+        expect(exit.value.output?.rawResponse).toStrictEqual({
+          rejected: { status: 400, message: `OpenRouter HTTP 400: ${body}` },
+        });
+        expect(exit.value.output?.message.toolCalls).toStrictEqual([]);
+      }
+    );
+
+    it("records a bare 422 for the scorer", async () => {
+      const exit = await solve(new Response("unprocessable", { status: 422 }), {
+        scoreUnattributedRejections: true,
+      });
+      assert(isSuccess(exit));
+      expect(exit.value.output?.rawResponse).toStrictEqual({
+        rejected: {
+          status: 422,
+          message: "OpenRouter HTTP 422: unprocessable",
+        },
+      });
+    });
+
+    it("still fails the run on an auth error", async () => {
+      const exit = await solve(new Response("no key", { status: 401 }), {
+        scoreUnattributedRejections: true,
+      });
+      expect(isFailure(exit)).toBe(true);
+    });
+
+    it("still fails the run on an unknown model", async () => {
+      const exit = await solve(new Response("no such model", { status: 404 }), {
+        scoreUnattributedRejections: true,
+      });
+      expect(isFailure(exit)).toBe(true);
+    });
   });
 
   it("fails the run on an auth error", async () => {
